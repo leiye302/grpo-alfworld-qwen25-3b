@@ -2,7 +2,7 @@
   "repository": "https://github.com/ZJU-REAL/SDAR.git",
   "commit": "29dcb12a55d8fc17ba6ae03fd0a69048f43051f3",
   "native_launcher": "examples/grpo_trainer/run_alfworld.sh",
-  "patch_sha256": "4fd96ab717de855ae64b1dff4a272f09a526790659961df26fb1320b2d5ebd3c",
+  "patch_sha256": "33d97e013af9971bc3eb656566cfaea60aacc292467ab7213ad74f491f1c4f84",
   "seen140_sha256": "bb3a1d67751b04ef0d03bcba0bd4b7c97d98f86ebcf20160985918256f957cb8",
   "unchanged_files": {
     "verl/trainer/ppo/ray_trainer.py": "47912490bc2e0de5999ac9588279bf38c87839145cb2101da1ab614f83a02023",
@@ -19,8 +19,8 @@
     "verl/trainer/config/ppo_trainer.yaml": "0f69218f169aed29a827818ca76fb26f7c1c5632bd9cbe318884617d5aa228cc"
   },
   "patched_files": {
-    "agent_system/environments/env_manager.py": "1e0d2417c318a141c0c6fbad5c6b3237a7f4858541743a675ebc5dc6ef8ef326",
-    "agent_system/environments/env_package/alfworld/envs.py": "053a1b5fdd65a6f402609eb1f47081ad167caa99c5f4aa23e79225347827097a",
+    "agent_system/environments/env_manager.py": "ba53a6abe50cdc6ade28bffa3b640e3d4e13aabecd86973c4dc249e8d0a485af",
+    "agent_system/environments/env_package/alfworld/envs.py": "e79b276420b96e25d9b20a3de92c5e86fa873ce6c20bef3b6aa25deb24dbeb4e",
     "verl/trainer/main_ppo.py": "4b471656730e10870af8550b00266f4194dc4df8920e06450e6d01e812cb6bd1",
     "agent_system/environments/env_package/alfworld/fixed_validation.py": "3f63b5f3ab11789e3b0e7e2f0a1d68c0a305efaeba2fb4fabc2ea2c8fb87f526"
   }

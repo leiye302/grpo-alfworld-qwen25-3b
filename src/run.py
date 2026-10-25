@@ -186,8 +186,9 @@ def main():
     parser.add_argument('--resume', action='store_true')
     parser.add_argument('--dry-run', action='store_true', help='Compose and print config, no CUDA/model/data access')
     args = parser.parse_args()
-    if args.cpus < 24:
-        parser.error('At least 24 allocated logical CPUs are recommended for the pooled configuration')
+    minimum_cpus = (32 if WORLD_SIZE == 4 else 40)
+    if args.cpus < minimum_cpus:
+        parser.error(f'At least {minimum_cpus} allocated logical CPUs are required for native environment actors')
     if args.model and args.command != 'eval':
         parser.error('--model is only accepted for evaluation; training uses the pinned base model')
     if args.command == 'export':

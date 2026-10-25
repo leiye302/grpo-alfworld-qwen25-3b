@@ -98,3 +98,9 @@ python src/report.py
 GitHub Actions从干净Linux检出公开获取上游，运行源码/配方锁、原生GRPO梯度测试、四卡梯度累积配置、固定任务、四rank存盘故障注入、八卡断点拒绝、真实CPU torch.save/load往返和启动检查。**没有在4×A100上运行正式训练或GPU恢复验收，没有预填成绩。**
 
 包装代码/上游框架采用Apache-2.0；模型遵守各自许可（1.5B为Apache-2.0，3B为Qwen Research License）。资源许可见 [THIRD_PARTY.md](THIRD_PARTY.md)。
+
+## 2026-10-26 执行设置更正
+
+撤回额外添加的串行环境分组，恢复官方每环境一个 Ray actor、每 actor 0.1 CPU。模型尺寸、获配卡数、训练量、loss、固定 seen140、验证频率和已约定的断点规则不变。未改写上游 rollout、Teacher 或优化器。
+
+已有 checkout 的旧 `.deps/sdar` 仍带旧补丁：在训练停止并保留断点后，将它改名备份，再运行 `python src/setup.py --framework`；或在新的目录重新克隆。不要删除 `runs/`，也不要在运行中的任务里替换依赖。旧配方与新配方的绑定 SHA 不同，禁止绕过恢复校验直接续跑。此更正通过 CPU/干净检出检查不等于已完成 A100 CUDA/NCCL/vLLM 实测。

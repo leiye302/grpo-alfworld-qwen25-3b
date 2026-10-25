@@ -439,14 +439,19 @@ def test_trainer_mro_keeps_native_fit_save_and_load_dispatch(monkeypatch):
 def test_training_sampling_loss_and_upstream_settings_unchanged():
     recipe = json.loads((ROOT / 'configs/experiment.json').read_text(encoding='utf-8'))
     assert recipe.pop('trainer.n_gpus_per_node') == 4
+    assert recipe['env.resources_per_worker.num_cpus'] == 0.1
+    assert 'env.alfworld.worker_pool_size' not in recipe
+    # Reconstruct only the removed runtime grouping to check the original scientific recipe.
+    recipe['env.resources_per_worker.num_cpus'] = 1
+    recipe['env.alfworld.worker_pool_size'] = 16
     normalized = json.dumps(recipe, sort_keys=True, separators=(',', ':')).encode()
     # Eight-GPU 07ff835 recipe, excluding the sole hardware-topology field.
     assert hashlib.sha256(normalized).hexdigest() == 'ddb36b37f711c6ac292f81643881a09560f652878ec78044797eb9d2276021e8'
     hashes = {
-        'configs/upstream.json': '438594db2ada0374586100ee670ae935468444d7a67d4f42415e88b63ecc9930',
+        'configs/upstream.json': '4d1ec1e0bd86a0956bddf3f30bfead5418d1fb6c41ac65a3b75f005f66aaad97',
         'configs/models.json': '972e825756799c75c8471864402c207170e68454532c5f4e70e7ff64275ffd00',
         'configs/seen140_tasks.json': 'bb3a1d67751b04ef0d03bcba0bd4b7c97d98f86ebcf20160985918256f957cb8',
-        'patches/runtime.patch': '4fd96ab717de855ae64b1dff4a272f09a526790659961df26fb1320b2d5ebd3c',
+        'patches/runtime.patch': '33d97e013af9971bc3eb656566cfaea60aacc292467ab7213ad74f491f1c4f84',
     }
     for name, expected in hashes.items():
         assert hashlib.sha256((ROOT / name).read_bytes()).hexdigest() == expected, name

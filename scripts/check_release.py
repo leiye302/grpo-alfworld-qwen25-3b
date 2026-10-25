@@ -13,6 +13,7 @@ ALLOWED = {
     'scripts/check_release.py', 'scripts/eval.sh', 'scripts/run_both.sh', 'scripts/train.sh',
     'src/common.py', 'src/checkpoint_io.py', 'src/fixed_validation.py', 'src/report.py', 'src/run.py',
     'src/grpo_eval.py', 'src/setup.py', 'tests/test_contract.py', 'tests/test_checkpoint_io.py',
+    'tests/test_native_runtime.py',
 }
 PRIVATE = [
     re.compile(r'[A-Za-z]:[/\\](?:Users[/\\]|app[/\\]|mnt[/\\])', re.I),

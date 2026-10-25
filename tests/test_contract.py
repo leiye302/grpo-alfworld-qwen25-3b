@@ -185,11 +185,11 @@ def test_native_grpo_loss_has_real_gradient_and_optimizer_update():
     assert torch.equal(student[:,2], old[:,2])
 
 
-def test_worker_pool_preserves_native_seeds_order_and_results():
+def test_native_workers_preserve_seeds_order_and_results():
     source = ROOT/'.deps/sdar/agent_system/environments/env_package/alfworld/envs.py'
     tree = ast.parse(source.read_text())
     classes = [n for n in tree.body if isinstance(n, ast.ClassDef)
-               and n.name in {'AlfworldWorker', 'AlfworldWorkerPool', 'AlfworldEnvs'}]
+               and n.name in {'AlfworldWorker', 'AlfworldEnvs'}]
 
     class NativeEnvironment:
         def seed(self, seed): self.value = seed
@@ -217,12 +217,13 @@ def test_worker_pool_preserves_native_seeds_order_and_results():
                  'load_config_file': lambda _: {'env': {'type': 'AlfredTWEnv'}},
                  'compute_reward': lambda info,multi_modal: 0}
     exec(compile(ast.Module(body=classes, type_ignores=[]), str(source), 'exec'), namespace)
-    outputs = []
-    for pool_size in (1, 2, 4):
-        env = namespace['AlfworldEnvs']('unused', 17, 3, 2, {}, env_kwargs={'worker_pool_size':pool_size})
-        outputs.append((copy.deepcopy(env.reset()), copy.deepcopy(env.step(['look']*6))))
-    assert outputs[0] == outputs[1] == outputs[2]
-    assert outputs[0][0][0] == ['17', '17', '18', '18', '19', '19']
+    env = namespace['AlfworldEnvs']('unused', 17, 3, 2, {})
+    assert len(env.workers) == 6
+    assert not hasattr(env, 'pool_size')
+    reset = copy.deepcopy(env.reset())
+    step = copy.deepcopy(env.step(['look'] * 6))
+    assert reset[0] == ['17', '17', '18', '18', '19', '19']
+    assert step[0] == ['17look', '17look', '18look', '18look', '19look', '19look']
 
 
 def test_dry_run_needs_no_model_or_gpu(tmp_path):

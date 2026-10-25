@@ -1,17 +1,16 @@
 diff --git a/agent_system/environments/env_manager.py b/agent_system/environments/env_manager.py
-index ab09dff..532e423 100644
+index ab09dff..4f3dc76 100644
 --- a/agent_system/environments/env_manager.py
 +++ b/agent_system/environments/env_manager.py
-@@ -638,6 +638,8 @@ def make_envs(config):
+@@ -638,6 +638,7 @@ def make_envs(config):
  
          env_kwargs = {
              'eval_dataset': config.env.alfworld.eval_dataset, # 'eval_in_distribution' or 'eval_out_of_distribution'
 +            'fixed_eval_manifest': config.env.alfworld.get('fixed_eval_manifest', None),
-+            'worker_pool_size': config.env.alfworld.get('worker_pool_size', 1),
          }
          _envs = build_alfworld_envs(alf_config_path, config.env.seed, config.data.train_batch_size, group_n, is_train=True, env_kwargs=env_kwargs, resources_per_worker=resources_per_worker)
          _val_envs = build_alfworld_envs(alf_config_path, config.env.seed + 1000, config.data.val_batch_size, 1, is_train=False, env_kwargs=env_kwargs, resources_per_worker=resources_per_worker)
-@@ -696,4 +698,4 @@ def make_envs(config):
+@@ -696,4 +697,4 @@ def make_envs(config):
          return envs, val_envs
      else:
          print("Environment not supported")
@@ -19,7 +18,7 @@ index ab09dff..532e423 100644
 \ No newline at end of file
 +        exit(1)
 diff --git a/agent_system/environments/env_package/alfworld/envs.py b/agent_system/environments/env_package/alfworld/envs.py
-index e72f621..52c0d1d 100644
+index e72f621..7d889fe 100644
 --- a/agent_system/environments/env_package/alfworld/envs.py
 +++ b/agent_system/environments/env_package/alfworld/envs.py
 @@ -60,6 +60,7 @@ class AlfworldWorker:
@@ -39,35 +38,10 @@ index e72f621..52c0d1d 100644
          obs, infos = self.env.reset()
          infos['observation_text'] = obs
          return obs, infos
-@@ -82,6 +85,21 @@ class AlfworldWorker:
-         image = image.cpu()  
-         return image
- 
-+class AlfworldWorkerPool:
-+    """Run independent native environments in fewer Python/Ray actors."""
-+
-+    def __init__(self, config, seeds, base_envs):
-+        self.workers = [AlfworldWorker(config, seed, base)
-+                        for seed, base in zip(seeds, base_envs, strict=True)]
-+
-+    def step(self, actions):
-+        return [worker.step(action) for worker, action
-+                in zip(self.workers, actions, strict=True)]
-+
-+    def reset(self):
-+        return [worker.reset() for worker in self.workers]
-+
-+
- class AlfworldEnvs(gym.Env):
-     def __init__(self, alf_config_path, seed, env_num, group_n, resources_per_worker, is_train=True, env_kwargs={}):
-         super().__init__()
-@@ -98,12 +116,28 @@ class AlfworldEnvs(gym.Env):
+@@ -98,12 +101,17 @@ class AlfworldEnvs(gym.Env):
          self.num_processes = env_num * group_n
          self.group_n = group_n
  
-+        self.pool_size = int(env_kwargs.get('worker_pool_size', 1))
-+        if self.pool_size < 1 or (self.multi_modal and self.pool_size != 1):
-+            raise ValueError('Worker pooling supports positive sizes and text ALFWorld only')
 +        fixed_envs = None
 +        if not is_train and env_kwargs.get('fixed_eval_manifest'):
 +            from .fixed_validation import fixed_validation_envs
@@ -76,52 +50,15 @@ index e72f621..52c0d1d 100644
          # Create Ray remote actors instead of processes
          env_worker = ray.remote(**resources_per_worker)(AlfworldWorker)
          self.workers = []
--        for i in range(self.num_processes):
+         for i in range(self.num_processes):
 -            worker = env_worker.remote(config, seed + (i // self.group_n), base_env)
 -            self.workers.append(worker)
-+        if self.pool_size == 1:
-+            for i in range(self.num_processes):
-+                worker_env = fixed_envs[i] if fixed_envs is not None else base_env
-+                self.workers.append(env_worker.remote(config, seed + (i // self.group_n), worker_env))
-+        else:
-+            pool_worker = ray.remote(**resources_per_worker)(AlfworldWorkerPool)
-+            for start in range(0, self.num_processes, self.pool_size):
-+                indices = range(start, min(start + self.pool_size, self.num_processes))
-+                bases = [fixed_envs[i] if fixed_envs is not None else base_env for i in indices]
-+                seeds = [seed + (i // self.group_n) for i in indices]
-+                self.workers.append(pool_worker.remote(config, seeds, bases))
++            worker_env = fixed_envs[i] if fixed_envs is not None else base_env
++            self.workers.append(env_worker.remote(config, seed + (i // self.group_n), worker_env))
  
          self.prev_admissible_commands = [None for _ in range(self.num_processes)]
  
-@@ -114,7 +148,8 @@ class AlfworldEnvs(gym.Env):
-         # Send step commands to all workers
-         futures = []
-         for i, worker in enumerate(self.workers):
--            future = worker.step.remote(actions[i])
-+            group = actions[i * self.pool_size:(i + 1) * self.pool_size]
-+            future = worker.step.remote(actions[i] if self.pool_size == 1 else group)
-             futures.append(future)
- 
-         # Collect results
-@@ -125,6 +160,8 @@ class AlfworldEnvs(gym.Env):
-         info_list = []
- 
-         results = ray.get(futures)
-+        if self.pool_size != 1:
-+            results = [result for group in results for result in group]
-         for i, (obs, scores, dones, info) in enumerate(results):
-             for k in info.keys():
-                 info[k] = info[k][0]
-@@ -159,6 +196,8 @@ class AlfworldEnvs(gym.Env):
- 
-         # Collect results
-         results = ray.get(futures)
-+        if self.pool_size != 1:
-+            results = [result for group in results for result in group]
-         for i, (obs, info) in enumerate(results):
-             for k in info.keys():
-                 info[k] = info[k][0] 
-@@ -203,4 +242,4 @@ class AlfworldEnvs(gym.Env):
+@@ -203,4 +211,4 @@ class AlfworldEnvs(gym.Env):
              ray.kill(worker)
  
  def build_alfworld_envs(alf_config_path, seed, env_num, group_n, resources_per_worker, is_train=True, env_kwargs={}):
@@ -129,9 +66,10 @@ index e72f621..52c0d1d 100644
 \ No newline at end of file
 +    return AlfworldEnvs(alf_config_path, seed, env_num, group_n, resources_per_worker, is_train, env_kwargs)
 diff --git a/verl/trainer/main_ppo.py b/verl/trainer/main_ppo.py
+index ea5ca4d..611c48d 100644
 --- a/verl/trainer/main_ppo.py
 +++ b/verl/trainer/main_ppo.py
-@@ -23,7 +23,7 @@ import hydra
+@@ -21,7 +21,7 @@ import hydra
  import ray
  from omegaconf import OmegaConf
  
@@ -140,4 +78,3 @@ diff --git a/verl/trainer/main_ppo.py b/verl/trainer/main_ppo.py
  from verl.trainer.ppo.reward import load_reward_manager
  from verl.trainer.constants_ppo import get_ppo_ray_runtime_env
  
-
