@@ -29,10 +29,18 @@ PPO global decision-row mini-batch256, micro32/GPU, one PPO epoch;
 reference KL=0.01 low_var_kl; entropy=0.001; invalid-action penalty=0.1.
 
 Interaction: max50 environment steps, history2, prompt2048, response512,
-training temperature1, top_p1, top_k=-1. Each size has eight FSDP ranks and
-four TP=2 vLLM rollout replicas, memory0.6, eager=false, free_cache=false.
+training temperature1, top_p1, top_k=-1. This standalone 3B release has four
+FSDP ranks and two TP=2 vLLM rollout replicas, memory0.6, eager=false, free_cache=false.
 The global batch does not increase with GPU count. env.rollout.n=8 while
 actor_rollout_ref.rollout.n remains one, as required by upstream.
+
+Relative to the eight-GPU 07ff835 release, experiment.json changes only
+trainer.n_gpus_per_node to four. Default GPU IDs, Ray allocation, rank-file
+checks and checkpoint binding also use four; default CPUs are32. The global
+mini-batch256 and per-GPU micro32 remain unchanged: native normalization gives
+local64 rows/rank and gradient accumulation, rather than local32 on eight
+ranks. Retain native decision-row batch adjustment and loss aggregation.
+Hardware topology changes are not a promise of bitwise numerical identity.
 
 ## Explicit adaptations
 
@@ -68,7 +76,7 @@ the native ALFWorld environment supplies the actual online tasks.
 Run source verification, `scripts/check_release.py`, CPU tests, and both
 dry-run commands before GPU work. On actual hardware confirm:
 
-1. Eight 80GB GPUs, eight FSDP ranks, TP2 rollout, intended model/revision.
+1. Four 80GB GPUs, four FSDP ranks, two TP2 rollout replicas, intended model/revision.
 2. Real environment reset, model response, parsed action, execution and feedback.
 3. Finite rewards/advantages/loss/grad norm and actual parameter updates.
 4. No Teacher scoring, skill injection or auxiliary distillation metrics.
@@ -94,16 +102,18 @@ the test set to select the best checkpoint as the final result. An independently
 launched exported-model evaluation starts controller numbering at0; record
 its actual training source step through the export manifest.
 
-Resume requires the same model, source, config, task-manifest and eight-rank
+Resume requires the same model, source, config, task-manifest and four-rank
 binding. Checkpoints include optimizer, scheduler/RNG extra and dataloader,
 but do not snapshot TextWorld environment iterators. Exact uninterrupted vs
 resumed rollout identity is not promised. First-save failure has no complete
 intermediate resume point; do not silently call a new run a continuation.
+An eight-rank run/checkpoint cannot be resumed by this four-rank recipe;
+preserve old output directories and use a new run directory for a fresh run.
 
 The native FSDP serializer and loader are unchanged. The storage wrapper writes
 all ranks into a same-filesystem hidden staging directory, with upstream's
 pre-save/in-memory pruning disabled for that call only. It flushes files and
-directories, requires all 24 rank shards plus data/config/tokenizer files,
+directories, requires all 12 rank shards plus data/config/tokenizer files,
 checks torch.save ZIP structure/CRCs without unpickling, and seals every file's
 size/SHA256 and the run-binding hash in CHECKPOINT_COMPLETE.json. The complete
 directory is atomically renamed into global_step_N; a full SHA reread must
@@ -123,9 +133,10 @@ source, and hf150 remains outside resumable-checkpoint rotation.
 
 Checksum reads add storage I/O only. Keep enough free space for two existing
 complete saves plus a third in progress; never delete a good save to make room
-for an unverified one. CPU tests cover eight-rank small-file layouts, failure
-injection and real torch.save/load roundtrips, not eight-GPU FSDP/NCCL recovery.
+for an unverified one. CPU tests cover four-rank small-file layouts, rejection
+of eight-rank saves/bindings, failure injection and real torch.save/load
+roundtrips, not four-GPU FSDP/NCCL recovery.
 
-Budget at least300GiB free, preferably400GiB, for both models, newest two
-complete checkpoints/size, public resources and save/export peaks. This is
+Budget at least200GiB free, preferably250GiB, for this one model, newest two
+complete checkpoints, public resources and save/export peaks. This is
 an estimate, not a measured minimum. No checkpoints or run logs ship publicly.

@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM = ROOT / '.deps/sdar'
-WORLD_SIZE = 8
+WORLD_SIZE = 4
 
 
 def load(name):
@@ -36,7 +36,7 @@ def atomic_json(path, value):
 def devices(spec):
     ids = [x.strip() for x in spec.split(',')]
     if len(ids) != WORLD_SIZE or len(set(ids)) != WORLD_SIZE or any(not x.isdigit() for x in ids):
-        raise ValueError('Choose eight distinct allocated GPU indices, e.g. 0,1,2,3,4,5,6,7')
+        raise ValueError('Choose four distinct allocated GPU indices, e.g. 0,1,2,3')
     return ids
 
 

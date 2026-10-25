@@ -1,4 +1,4 @@
-"""Small eight-rank saves, real CPU torch roundtrip, and failure injection."""
+"""Small four-rank saves, real CPU torch roundtrip, and failure injection."""
 import ast
 import hashlib
 import importlib.util
@@ -18,17 +18,18 @@ sys.path.insert(0, str(ROOT / 'src'))
 import checkpoint_io
 from checkpoint_io import CheckpointStore, COMPLETE, NativeCheckpointMixin, POINTER
 from run import config, run_lock
+from common import WORLD_SIZE
 
 
-def native_files(directory, step, *, torch=None):
+def native_files(directory, step, *, torch=None, world_size=WORLD_SIZE):
     directory.mkdir(parents=True)
     actor = directory / 'actor'
     actor.mkdir()
     for name in ('config.json', 'tokenizer.json', 'tokenizer_config.json', 'vocab.json'):
         (actor / name).write_text('{"fixture": true}', encoding='utf-8')
     (actor / 'merges.txt').write_text('#version: 0.2\na b\n', encoding='utf-8')
-    paths = [directory / 'data.pt'] + [actor / f'{kind}_world_size_8_rank_{rank}.pt'
-             for rank in range(8) for kind in ('model', 'optim', 'extra_state')]
+    paths = [directory / 'data.pt'] + [actor / f'{kind}_world_size_{world_size}_rank_{rank}.pt'
+             for rank in range(world_size) for kind in ('model', 'optim', 'extra_state')]
     for path in paths:
         payload = {'step': step, 'file': path.name}
         if torch is not None:
@@ -45,7 +46,7 @@ def native_files(directory, step, *, torch=None):
 def store(tmp_path):
     run = tmp_path / 'run'
     run.mkdir()
-    (run / 'binding.json').write_text(json.dumps({'command': 'train', 'world_size': 8,
+    (run / 'binding.json').write_text(json.dumps({'command': 'train', 'world_size': WORLD_SIZE,
                                                  'recipe': 'same-scientific-settings'}), encoding='utf-8')
     return CheckpointStore(run)
 
@@ -75,8 +76,8 @@ def test_save_then_rotate_not_rotate_then_save(store):
     assert int((store.root / POINTER).read_text()) == 60
     assert not list(store.root.glob('.saving-*'))
     manifest = json.loads((store.root / 'global_step_60' / COMPLETE).read_text())
-    assert manifest['step'] == 60 and manifest['world_size'] == 8
-    assert len(manifest['files']) == 30  # 24 shards + data + five tokenizer/config files.
+    assert manifest['step'] == 60 and manifest['world_size'] == WORLD_SIZE
+    assert len(manifest['files']) == 3 * WORLD_SIZE + 6
 
 
 @pytest.mark.parametrize('failure', ['writer', 'missing_rank', 'missing_data', 'truncated_zip', 'crc', 'json'])
@@ -90,7 +91,7 @@ def test_failed_save_never_prunes_or_changes_pointer(store, failure):
         path = staging / 'global_step_60'
         native_files(path, 60)
         if failure == 'missing_rank':
-            (path / 'actor/optim_world_size_8_rank_7.pt').unlink()
+            (path / f'actor/optim_world_size_{WORLD_SIZE}_rank_{WORLD_SIZE - 1}.pt').unlink()
         elif failure == 'missing_data':
             (path / 'data.pt').unlink()
         elif failure == 'truncated_zip':
@@ -192,11 +193,23 @@ def test_no_verified_save_is_not_a_fresh_start(store):
 
 def test_wrong_world_size_rejected(store):
     path = store.root / 'global_step_20'
-    native_files(path, 20)
-    shard = path / 'actor/model_world_size_8_rank_0.pt'
-    shard.rename(shard.with_name('model_world_size_4_rank_0.pt'))
-    with pytest.raises(RuntimeError, match='Incomplete eight-rank'):
+    native_files(path, 20, world_size=8)
+    with pytest.raises(RuntimeError, match='Incomplete four-rank'):
         store.certify(path)
+
+
+def test_eight_rank_run_binding_is_rejected_without_modifying_existing_saves(store):
+    save(store, 20)
+    checkpoint = store.root / 'global_step_20'
+    before = (checkpoint / COMPLETE).read_bytes()
+    binding_path = store.run_dir / 'binding.json'
+    binding = json.loads(binding_path.read_text())
+    binding['world_size'] = 8
+    binding_path.write_text(json.dumps(binding))
+    with pytest.raises(RuntimeError, match='four-rank training binding'):
+        CheckpointStore(store.run_dir)
+    assert (checkpoint / COMPLETE).read_bytes() == before
+    assert int((store.root / POINTER).read_text()) == 20
 
 
 def test_exact_inventory_and_manifest_paths_cannot_escape(store, tmp_path):
@@ -382,9 +395,9 @@ def test_mixin_calls_actual_locked_native_save_and_load(store, monkeypatch):
 
         def load_checkpoint(self, local, del_local_after_load):
             assert not del_local_after_load
-            for rank in range(8):
+            for rank in range(WORLD_SIZE):
                 for kind in ('model', 'optim', 'extra_state'):
-                    file = Path(local) / f'{kind}_world_size_8_rank_{rank}.pt'
+                    file = Path(local) / f'{kind}_world_size_{WORLD_SIZE}_rank_{rank}.pt'
                     value = torch.load(file, weights_only=True, map_location='cpu')
                     assert value['tensor'].tolist() == [60, 7]
             loaded['worker_step'] = 60
@@ -424,8 +437,12 @@ def test_trainer_mro_keeps_native_fit_save_and_load_dispatch(monkeypatch):
 
 
 def test_training_sampling_loss_and_upstream_settings_unchanged():
+    recipe = json.loads((ROOT / 'configs/experiment.json').read_text(encoding='utf-8'))
+    assert recipe.pop('trainer.n_gpus_per_node') == 4
+    normalized = json.dumps(recipe, sort_keys=True, separators=(',', ':')).encode()
+    # Eight-GPU 07ff835 recipe, excluding the sole hardware-topology field.
+    assert hashlib.sha256(normalized).hexdigest() == 'ddb36b37f711c6ac292f81643881a09560f652878ec78044797eb9d2276021e8'
     hashes = {
-        'configs/experiment.json': '364a43a888e6f583afb992d96e576f74c176583483af9a2463c4f7a9287a67ef',
         'configs/upstream.json': '438594db2ada0374586100ee670ae935468444d7a67d4f42415e88b63ecc9930',
         'configs/models.json': '972e825756799c75c8471864402c207170e68454532c5f4e70e7ff64275ffd00',
         'configs/seen140_tasks.json': 'bb3a1d67751b04ef0d03bcba0bd4b7c97d98f86ebcf20160985918256f957cb8',

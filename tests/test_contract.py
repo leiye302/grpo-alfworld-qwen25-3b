@@ -29,7 +29,8 @@ def test_native_source_and_task_locks():
 @pytest.mark.parametrize('size', ['1.5b', '3b'])
 def test_composed_native_grpo_recipe(size, tmp_path):
     cfg = config(size, tmp_path/'model', tmp_path/'assets', tmp_path/'run')
-    assert (cfg.trainer.n_gpus_per_node, cfg.ray_init.num_gpus) == (8, 8)
+    assert (cfg.trainer.n_gpus_per_node, cfg.ray_init.num_gpus) == (4, 4)
+    assert cfg.ray_init.num_cpus == 32
     assert cfg.actor_rollout_ref.rollout.tensor_model_parallel_size == 2
     assert cfg.actor_rollout_ref.rollout.gpu_memory_utilization == 0.6
     assert not cfg.actor_rollout_ref.rollout.enforce_eager
@@ -71,16 +72,17 @@ def test_distillation_actor_flag_is_rejected(name, tmp_path):
         assert_grpo_only(cfg)
 
 
-@pytest.mark.parametrize('spec', ['0,1', '0,1,2,3', '0,1,2,3,4,5,6,6',
-                                 '0,1,2,3,4,5,6,7,8', '', '0,1,2,3,4,5,6,GPU-xxx'])
+@pytest.mark.parametrize('spec', ['0,1', '0,1,2', '0,1,2,2', '0,1,2,3,4',
+                                 '0,1,2,3,4,5,6,7', '', '0,1,2,GPU-xxx'])
 def test_invalid_gpu_allocation(spec):
     with pytest.raises(ValueError):
         devices(spec)
 
 
-def test_eight_gpu_allocation():
-    assert devices('0,1,2,3,4,5,6,7') == [str(i) for i in range(8)]
-    assert devices('8,9,10,11,12,13,14,15') == [str(i) for i in range(8, 16)]
+def test_four_gpu_allocation():
+    assert WORLD_SIZE == 4
+    assert devices('0,1,2,3') == [str(i) for i in range(4)]
+    assert devices('4,5,6,7') == [str(i) for i in range(4, 8)]
 
 
 def test_partial_checkpoint_rejected(tmp_path):
@@ -96,10 +98,10 @@ def test_partial_checkpoint_rejected(tmp_path):
     assert checkpoint_complete(tmp_path) == tmp_path
 
 
-def test_four_rank_checkpoint_is_not_an_eight_rank_resume(tmp_path):
-    for rank in range(4):
+def test_eight_rank_checkpoint_is_not_a_four_rank_resume(tmp_path):
+    for rank in range(8):
         for kind in ('model', 'optim', 'extra_state'):
-            path = tmp_path/'actor'/f'{kind}_world_size_4_rank_{rank}.pt'
+            path = tmp_path/'actor'/f'{kind}_world_size_8_rank_{rank}.pt'
             path.parent.mkdir(exist_ok=True)
             path.write_bytes(b'unit-test')
     (tmp_path/'actor/config.json').write_text('{}')
@@ -247,7 +249,7 @@ def test_models_share_all_scientific_settings(tmp_path):
     assert OmegaConf.to_container(left, resolve=True) == OmegaConf.to_container(right, resolve=True)
 
 
-def test_scientific_and_eight_gpu_settings_match_official_grpo_launcher(tmp_path):
+def test_scientific_settings_match_official_grpo_launcher_except_gpu_count(tmp_path):
     from omegaconf import OmegaConf
     source = (ROOT/'.deps/sdar/examples/grpo_trainer/run_alfworld.sh').read_text()
     assignments = dict(re.findall(r'(?m)^\s*\+?([\w.]+)=([^\s\\]+)', source))
@@ -277,7 +279,7 @@ def test_scientific_and_eight_gpu_settings_match_official_grpo_launcher(tmp_path
         'actor_rollout_ref.actor.use_invalid_action_penalty',
         'actor_rollout_ref.actor.invalid_action_penalty_coef',
         'algorithm.use_kl_in_reward', 'env.env_name', 'env.seed', 'env.max_steps',
-        'env.rollout.n', 'trainer.critic_warmup', 'trainer.n_gpus_per_node',
+        'env.rollout.n', 'trainer.critic_warmup',
         'trainer.ray_wait_register_center_timeout', 'trainer.nnodes',
         'trainer.total_epochs', 'trainer.val_before_train',
     ]
@@ -295,6 +297,25 @@ def test_scientific_and_eight_gpu_settings_match_official_grpo_launcher(tmp_path
             except ValueError:
                 expected = raw
         assert OmegaConf.select(cfg, key) == expected, key
+
+
+def test_native_gradient_accumulation_preserves_global_batch_on_four_gpus(tmp_path):
+    cfg = config('3b', tmp_path/'model', tmp_path/'assets', tmp_path/'run')
+    source = ROOT/'.deps/sdar/verl/workers/fsdp_workers.py'
+    tree = ast.parse(source.read_text(encoding='utf-8'))
+    normalization = next(node for node in ast.walk(tree) if isinstance(node, ast.If)
+        and ast.unparse(node.test) == 'self._is_actor'
+        and 'self.config.actor.ppo_mini_batch_size *= self.config.rollout.n' in ast.unparse(node))
+    results = {}
+    for ranks in (4, 8):
+        worker = SimpleNamespace(_is_actor=True, config=copy.deepcopy(cfg.actor_rollout_ref),
+            device_mesh=SimpleNamespace(size=lambda: ranks), ulysses_sequence_parallel_size=1)
+        exec(compile(ast.Module(body=[normalization], type_ignores=[]), str(source), 'exec'), {'self': worker})
+        local = worker.config.actor.ppo_mini_batch_size
+        micro = worker.config.actor.ppo_micro_batch_size_per_gpu
+        assert ranks * local == cfg.actor_rollout_ref.actor.ppo_mini_batch_size
+        results[ranks] = (local, micro, local // micro)
+    assert results == {4: (64, 32, 2), 8: (32, 32, 1)}
 
 
 def test_validation_uses_native_padding_and_runtime_directory_is_composable(tmp_path):

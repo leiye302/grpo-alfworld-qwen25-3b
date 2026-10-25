@@ -22,3 +22,5 @@ jobs:
       - run: bash -n scripts/train.sh scripts/eval.sh scripts/run_both.sh
       - run: python src/run.py train --size 1.5b --dry-run > /tmp/grpo-15b-config.yaml
       - run: python src/run.py train --size 3b --dry-run > /tmp/grpo-3b-config.yaml
+      - run: bash scripts/train.sh --dry-run > /tmp/grpo-single-model-config.yaml
+      - run: bash scripts/eval.sh --model ./unused-hf-model --dry-run > /tmp/grpo-single-model-eval.yaml

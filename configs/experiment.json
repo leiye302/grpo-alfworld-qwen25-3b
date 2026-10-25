@@ -48,7 +48,7 @@
   "trainer.critic_warmup": 0,
   "trainer.logger": ["console"],
   "trainer.project_name": "grpo_alfworld",
-  "trainer.n_gpus_per_node": 8,
+  "trainer.n_gpus_per_node": 4,
   "trainer.nnodes": 1,
   "trainer.total_epochs": 150,
   "trainer.total_training_steps": 150,

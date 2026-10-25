@@ -80,7 +80,7 @@ class CheckpointStore:
         binding = json.loads((self.run_dir / 'binding.json').read_text(encoding='utf-8'))
         if (not isinstance(binding, dict) or binding.get('world_size') != WORLD_SIZE
                 or binding.get('command') != 'train'):
-            raise RuntimeError('Checkpoint storage requires this eight-rank training binding')
+            raise RuntimeError('Checkpoint storage requires this four-rank training binding')
         serialized = json.dumps(binding, sort_keys=True, separators=(',', ':'), allow_nan=False)
         self.binding_sha = hashlib.sha256(serialized.encode('utf-8')).hexdigest()
         self.root = self.run_dir / 'checkpoints'
@@ -121,7 +121,7 @@ class CheckpointStore:
         shards = {f'actor/{kind}_world_size_{WORLD_SIZE}_rank_{rank}.pt'
                   for rank in range(WORLD_SIZE) for kind in ('model', 'optim', 'extra_state')}
         if not (required | shards) <= files.keys():
-            raise RuntimeError('Incomplete eight-rank checkpoint: ' + str(path))
+            raise RuntimeError('Incomplete four-rank checkpoint: ' + str(path))
         if {name for name in files if name.endswith('.pt')} != shards | {'data.pt'}:
             raise RuntimeError('Unexpected rank/world-size/component layout: ' + str(path))
         for name, item in files.items():
